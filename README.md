@@ -67,8 +67,8 @@ The trained Random Forest model (`rf_model.pkl`) is >100MB and is NOT tracked by
 
 - [ ] **Phase 1: Explainable AI Deep Dive (Grad-CAM Integration)**
   - Implement Grad-CAM for the mCNN model to explicitly highlight hydrophobic amino acids, ensuring the model captures meaningful biological features rather than memorizing data.
-- [ ] **Phase 2: State-of-the-Art (SOTA) Model Integration**
-  - Integrate Meta's ESM-2 Protein Language Model.
+- [x] **Phase 2: State-of-the-Art (SOTA) Model Integration**
+  - Integrate Meta's ESM-2 Protein Language Model (Mock integration via Waterfall Architecture).
   - Apply transfer learning by freezing base layers and fine-tuning the model for secondary tasks such as Toxicity prediction.
 - [ ] **Phase 3: Industrial MLOps Pipeline**
   - Consolidate all models under a unified FastAPI architecture.
