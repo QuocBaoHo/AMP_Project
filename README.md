@@ -15,7 +15,7 @@ The core highlight of this project is the integration of **Explainable AI (XAI)*
 - **Explainable AI (XAI) - Feature Analysis**: 
   - Utilizes **Occlusion Sensitivity** to compute the relative importance of each individual Amino Acid in the sequence.
   - Visualizes the results via an interactive **HTML Heatmap**, highlighting the most critical Amino Acids in deep red.
-- **Interactive Benchmark Dashboard**: A dedicated interface (`benchmark_app.py`) to run evaluations on the full `viri_test` dataset (28.5k samples) and visually compare metrics (Accuracy, Precision, Recall, F1-Score, ROC AUC) across baseline models (1D CNN, Random Forest) and the proposed mCNN model.
+- **Interactive Benchmark Dashboard**: A dedicated interface (`benchmark_app.py`) to run evaluations on the full `test_multitask` dataset (9.6k samples) and visually compare metrics (Accuracy, Precision, Recall, F1-Score, ROC AUC) across baseline models (1D CNN, Random Forest), the proposed mCNN model, and the SOTA ESM-2 Multitask model.
 - **Modern Microservices Architecture**: Decouples a high-performance backend API (FastAPI) from a smooth, interactive frontend interface (Streamlit).
 
 ## 🛠️ Setup & Installation
@@ -53,7 +53,7 @@ AMP_Project/
 │
 ├── backend.py             # FastAPI Server: AI logic & XAI interpolation
 ├── frontend.py            # Streamlit Client: Web App UI & HTML Heatmap rendering
-├── benchmark_app.py       # Streamlit Dashboard: Full benchmark comparison on viri_test
+├── benchmark_app.py       # Streamlit Dashboard: Full benchmark comparison on multitask test set
 ├── mcnn_model.keras       # Multi-branch CNN model weights
 ├── cnn_model.keras        # Baseline 1D CNN model weights
 ├── tokenizer.pkl          # Tokenizer for mapping sequences to numerical vectors
