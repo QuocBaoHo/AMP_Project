@@ -7,9 +7,9 @@ import tensorflow as tf
 import keras
 import numpy as np
 
-# TODO: Vài bữa ráp hàng thật thì bỏ comment 2 dòng này
-# import torch
-# from transformers import AutoTokenizer, EsmForSequenceClassification
+# --- MỞ KHÓA VŨ KHÍ HẠNG NẶNG ---
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 app = FastAPI(title="AMP & Toxicity Cascade Pipeline")
 
@@ -21,27 +21,43 @@ rf_model = joblib.load('rf_model.pkl')
 with open('tokenizer.pkl', 'rb') as f:
     tokenizer = pickle.load(f)
 
-# --- NẠP BẢO VẬT GIAI ĐOẠN 2 (Trùm cuối ESM-2) ---
-print("Đang khởi động STAGE 2: Lò phản ứng ESM-2 (Chế độ chờ)...")
-# Tương lai:
-# esm_tokenizer = AutoTokenizer.from_pretrained("facebook/esm2_t6_8M_UR50D")
-# esm_model = EsmForSequenceClassification.from_pretrained("du_an_CTU_cua_ong/esm2_finetuned")
+# --- NẠP BẢO VẬT GIAI ĐOẠN 2 (Trùm cuối ESM-2 THẬT) ---
+print("🚀 Đang khởi động Lò phản ứng ESM-2 (Hàng Real 99.6%)...")
+esm2_path = "./esm2_multitask_final" # Đổi sang model multitask có đo độc tính
+esm2_tokenizer = AutoTokenizer.from_pretrained(esm2_path)
+esm2_model = AutoModelForSequenceClassification.from_pretrained(esm2_path)
+esm2_model.eval() # Bật chế độ chạy thực tế, không train nữa
 
 def run_esm2_reactor(full_sequence: str, task: str):
     """
-    Hàm mô phỏng ESM-2. 
+    Hàm vận hành não ESM-2 thật. 
     task: 'verify_amp' (check lại oan sai) hoặc 'toxicity' (đo độc tính)
     """
-    # Logic giả lập ESM-2 để test luồng trước khi lắp não thật:
+    # Ép chuỗi vào khuôn của ESM-2
+    inputs = esm2_tokenizer(full_sequence, return_tensors="pt", truncation=True, max_length=128)
+    
+    with torch.no_grad():
+        logits = esm2_model(**inputs).logits
+        probs = torch.sigmoid(logits)[0] # Multitask dùng sigmoid
+    
+    # Lấy xác suất: vị trí 0 là AMP, vị trí 1 là Toxicity
+    amp_prob = probs[0].item()
+    tox_prob = probs[1].item()
+    
     if task == 'verify_amp':
-        # Giả vờ ESM-2 đọc từ đầu đến đuôi và thấy tổ hợp kỵ nước mạnh (Cysteine hoặc Phenylalanine/Leucine)
-        if 'CC' in full_sequence or 'FFF' in full_sequence or 'LLL' in full_sequence:
-            return {"status": "AMP", "prob": 0.88, "msg": "ESM-2 confirmed: The sequence was wrongfully truncated, this is a true AMP!"}
-        return {"status": "NON-AMP", "prob": 0.12, "msg": "ESM-2 confirmed: Read the entire sequence, it is indeed NON-AMP."}
+        if amp_prob > 0.5:
+            return {"status": "AMP", "prob": round(amp_prob, 3), "msg": "ESM-2 xác nhận: Chuỗi bị cắt oan, đây là AMP xịn!"}
+        else:
+            return {"status": "NON-AMP", "prob": round(1-amp_prob, 3), "msg": "ESM-2 xác nhận: Đã đọc toàn bộ chuỗi gốc, đúng là rác!"}
     
     elif task == 'toxicity':
-        # Cứ là AMP thì giả vờ đo độc tính
-        return {"is_toxic": False, "prob": 0.05, "msg": "Safe! Does not destroy human red blood cells (Non-toxic)."}
+        # Logic đo độc: Tận dụng xác suất Toxicity từ label thứ 2
+        is_toxic = tox_prob > 0.5 
+        return {
+            "is_toxic": is_toxic, 
+            "prob": round(tox_prob, 3), 
+            "msg": "Cảnh báo: Có khả năng gây độc!" if is_toxic else "An toàn! Không phá hủy hồng cầu người (Non-toxic)."
+        }
 
 class PeptideData(BaseModel):
     sequence: str
@@ -61,16 +77,29 @@ def predict_all(data: PeptideData):
     prob_mcnn = float(mcnn_model.predict(seq_padded, verbose=0)[0][0])
     mcnn_verdict = "AMP" if prob_mcnn > 0.5 else "NON-AMP"
     
-    # 3. ĐỊNH TUYẾN ĐỘNG (CASCADE ROUTING) - Ăn tiền là khúc này!
+    # 3. ĐỊNH TUYẾN ĐỘNG (CASCADE ROUTING) - Bản nâng cấp Threshold!
     final_status = mcnn_verdict
     routing_status = "MCNN_ONLY"
     esm2_amp_result = None
     esm2_tox_result = None
 
-    if mcnn_verdict == "NON-AMP" and is_long:
-        # Bị cắt đầu mà bị phán là rác -> Kích hoạt ESM-2 vớt hàng!
+    # Tính độ tự tin (Confidence) của mCNN
+    # Nếu phán AMP thì lấy prob, nếu phán NON-AMP thì lấy 1 - prob
+    mcnn_confidence = prob_mcnn if mcnn_verdict == "AMP" else (1 - prob_mcnn)
+
+    # ĐIỀU KIỆN KÍCH HOẠT ESM-2:
+    # 1. Bị cắt gọt (is_long = True)
+    # HOẶC
+    # 2. mCNN phán là RÁC nhưng độ tự tin quá thấp (< 0.85)
+    if mcnn_verdict == "NON-AMP" and (is_long or mcnn_confidence < 0.85):
+        
         routing_status = "ESM_VERIFIED"
         esm2_amp_result = run_esm2_reactor(original_seq, task='verify_amp')
+        
+        # Sửa lại câu thông báo cho ngầu
+        if not is_long:
+            esm2_amp_result["msg"] = "ESM-2 xác nhận: mCNN dự đoán sai do độ tự tin thấp, đây là AMP xịn!"
+            
         final_status = esm2_amp_result["status"] # Ghi đè phán quyết cuối cùng
     
     # Nếu kết quả cuối cùng nó là AMP (do mCNN phán chuẩn, hoặc do ESM-2 vớt lại thành công)

@@ -11,7 +11,7 @@ The core highlight of this project is the integration of **Explainable AI (XAI)*
 ## 🚀 Core Features
 
 - **Rapid & Accurate Prediction**: Instantly determines whether a given peptide sequence is an AMP, accompanied by a confidence score.
-- **Advanced AI Core**: Powered by a robust **Multi-branch Convolutional Neural Network (mCNN)** deep learning model.
+- **Advanced AI Core**: Powered by a robust **Multi-branch Convolutional Neural Network (mCNN)** deep learning model and a state-of-the-art **ESM-2 Multitask Model** for simultaneous AMP and Toxicity prediction.
 - **Explainable AI (XAI) - Feature Analysis**: 
   - Utilizes **Occlusion Sensitivity** to compute the relative importance of each individual Amino Acid in the sequence.
   - Visualizes the results via an interactive **HTML Heatmap**, highlighting the most critical Amino Acids in deep red.
@@ -57,7 +57,8 @@ AMP_Project/
 ├── mcnn_model.keras       # Multi-branch CNN model weights
 ├── cnn_model.keras        # Baseline 1D CNN model weights
 ├── tokenizer.pkl          # Tokenizer for mapping sequences to numerical vectors
-└── vectorizer.pkl         # TF-IDF Vectorizer for Random Forest model
+├── vectorizer.pkl         # TF-IDF Vectorizer for Random Forest model
+└── esm2_multitask_final/  # Saved ESM-2 Multitask Model for AMP & Toxicity prediction
 
 **⚠️ NOTE FOR LARGE FILES:** 
 The trained Random Forest model (`rf_model.pkl`) is >100MB and is NOT tracked by Git to avoid size limits. Please manually download/upload it and place it in the root directory before running the benchmark.
@@ -68,8 +69,8 @@ The trained Random Forest model (`rf_model.pkl`) is >100MB and is NOT tracked by
 - [ ] **Phase 1: Explainable AI Deep Dive (Grad-CAM Integration)**
   - Implement Grad-CAM for the mCNN model to explicitly highlight hydrophobic amino acids, ensuring the model captures meaningful biological features rather than memorizing data.
 - [x] **Phase 2: State-of-the-Art (SOTA) Model Integration**
-  - Integrate Meta's ESM-2 Protein Language Model (Mock integration via Waterfall Architecture).
-  - Apply transfer learning by freezing base layers and fine-tuning the model for secondary tasks such as Toxicity prediction.
+  - Integrated Meta's ESM-2 Protein Language Model.
+  - Applied transfer learning by freezing base layers and fine-tuning the model for multitask prediction (AMP & Toxicity).
 - [ ] **Phase 3: Industrial MLOps Pipeline**
   - Consolidate all models under a unified FastAPI architecture.
   - Enhance the Streamlit dashboard for seamless API interaction.
