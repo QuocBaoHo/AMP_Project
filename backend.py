@@ -25,7 +25,7 @@ with open('tokenizer.pkl', 'rb') as f:
 print("🚀 Đang khởi động Lò phản ứng ESM-2 (Hàng Real 99.6%)...")
 esm2_path = "./esm2_multitask_final" # Đổi sang model multitask có đo độc tính
 esm2_tokenizer = AutoTokenizer.from_pretrained(esm2_path)
-esm2_model = AutoModelForSequenceClassification.from_pretrained(esm2_path)
+esm2_model = AutoModelForSequenceClassification.from_pretrained(esm2_path, attn_implementation="eager")
 esm2_model.eval() # Bật chế độ chạy thực tế, không train nữa
 
 def run_esm2_reactor(full_sequence: str, task: str):
@@ -37,27 +37,65 @@ def run_esm2_reactor(full_sequence: str, task: str):
     inputs = esm2_tokenizer(full_sequence, return_tensors="pt", truncation=True, max_length=128)
     
     with torch.no_grad():
-        logits = esm2_model(**inputs).logits
+        # Bật output_attentions để lấy XAI
+        outputs = esm2_model(**inputs, output_attentions=True)
+        logits = outputs.logits
         probs = torch.sigmoid(logits)[0] # Multitask dùng sigmoid
+        attentions = outputs.attentions
     
     # Lấy xác suất: vị trí 0 là AMP, vị trí 1 là Toxicity
     amp_prob = probs[0].item()
     tox_prob = probs[1].item()
     
+    result = {}
     if task == 'verify_amp':
         if amp_prob > 0.5:
-            return {"status": "AMP", "prob": round(amp_prob, 3), "msg": "ESM-2 xác nhận: Chuỗi bị cắt oan, đây là AMP xịn!"}
+            result = {"status": "AMP", "prob": round(amp_prob, 3), "msg": "ESM-2 xác nhận: Chuỗi bị cắt oan, đây là AMP xịn!"}
         else:
-            return {"status": "NON-AMP", "prob": round(1-amp_prob, 3), "msg": "ESM-2 xác nhận: Đã đọc toàn bộ chuỗi gốc, đúng là rác!"}
+            result = {"status": "NON-AMP", "prob": round(1-amp_prob, 3), "msg": "ESM-2 xác nhận: Đã đọc toàn bộ chuỗi gốc, đúng là rác!"}
     
     elif task == 'toxicity':
         # Logic đo độc: Tận dụng xác suất Toxicity từ label thứ 2
         is_toxic = tox_prob > 0.5 
-        return {
+        result = {
             "is_toxic": is_toxic, 
             "prob": round(tox_prob, 3), 
             "msg": "Cảnh báo: Có khả năng gây độc!" if is_toxic else "An toàn! Không phá hủy hồng cầu người (Non-toxic)."
         }
+        
+    # XAI Độc lập bằng phương pháp Occlusion (Che lấp) để phân biệt rõ AMP và Toxicity
+    input_ids = inputs['input_ids'][0]
+    seq_len = len(input_ids)
+    actual_len = seq_len - 2 # Bỏ <s> và </s>
+    
+    importances = []
+    mask_token_id = esm2_tokenizer.mask_token_id if esm2_tokenizer.mask_token_id is not None else esm2_tokenizer.pad_token_id
+    
+    for i in range(1, seq_len - 1):
+        masked_input_ids = input_ids.clone()
+        masked_input_ids[i] = mask_token_id
+        
+        masked_inputs = {'input_ids': masked_input_ids.unsqueeze(0), 'attention_mask': inputs['attention_mask']}
+        with torch.no_grad():
+            masked_logits = esm2_model(**masked_inputs).logits
+            masked_probs = torch.sigmoid(masked_logits)[0]
+            
+        if task == 'verify_amp':
+            # Importance = Khả năng AMP giảm bao nhiêu khi mất axit amin này
+            drop = amp_prob - masked_probs[0].item()
+            importances.append(max(0, drop))
+        else:
+            # Importance = Khả năng Độc tính giảm bao nhiêu khi mất axit amin này
+            drop = tox_prob - masked_probs[1].item()
+            importances.append(max(0, drop))
+            
+    max_imp = max(importances) if importances and max(importances) > 0 else 1.0
+    xai_scores = [imp / max_imp for imp in importances]
+    
+    result["xai_scores"] = xai_scores
+    result["processed_sequence"] = full_sequence[:actual_len]
+    
+    return result
 
 class PeptideData(BaseModel):
     sequence: str
@@ -87,18 +125,22 @@ def predict_all(data: PeptideData):
     # Nếu phán AMP thì lấy prob, nếu phán NON-AMP thì lấy 1 - prob
     mcnn_confidence = prob_mcnn if mcnn_verdict == "AMP" else (1 - prob_mcnn)
 
-    # ĐIỀU KIỆN KÍCH HOẠT ESM-2:
-    # 1. Bị cắt gọt (is_long = True)
-    # HOẶC
-    # 2. mCNN phán là RÁC nhưng độ tự tin quá thấp (< 0.85)
-    if mcnn_verdict == "NON-AMP" and (is_long or mcnn_confidence < 0.85):
+    # ĐIỀU KIỆN KÍCH HOẠT ESM-2 (FAILSAFE):
+    # Nếu mCNN dự đoán là AMP với độ tự tin >= 0.85, bỏ qua failsafe (kể cả chuỗi dài/cắt gọt vì đã chắc kèo).
+    # Còn lại: đẩy qua ESM-2 nếu độ tự tin thấp (< 0.85) hoặc chuỗi bị cắt gọt (is_long).
+    is_confident_amp = (mcnn_verdict == "AMP" and mcnn_confidence >= 0.85)
+    
+    if (is_long or mcnn_confidence < 0.85) and not is_confident_amp:
         
         routing_status = "ESM_VERIFIED"
         esm2_amp_result = run_esm2_reactor(original_seq, task='verify_amp')
         
-        # Sửa lại câu thông báo cho ngầu
+        # Sửa lại câu thông báo
         if not is_long:
-            esm2_amp_result["msg"] = "ESM-2 xác nhận: mCNN dự đoán sai do độ tự tin thấp, đây là AMP xịn!"
+            if mcnn_verdict == "NON-AMP":
+                esm2_amp_result["msg"] = "ESM-2 xác nhận: mCNN dự đoán sai do độ tự tin thấp, đây là AMP xịn!"
+            else:
+                esm2_amp_result["msg"] = "ESM-2 xác nhận: mCNN đoán đúng, nhưng tự tin thấp quá. Đã kiểm chứng lại bằng ESM-2!"
             
         final_status = esm2_amp_result["status"] # Ghi đè phán quyết cuối cùng
     
